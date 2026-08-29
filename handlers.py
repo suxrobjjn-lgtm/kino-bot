@@ -174,6 +174,9 @@ async def callback_show_latest(callback: CallbackQuery):
 @router.message(F.text)
 async def process_user_query(message: Message, bot: Bot):
     query = message.text.strip()
+    if query.startswith("/"):
+        return
+
     is_sub, unsubs = await check_user_subscription(bot, message.from_user.id)
     if not is_sub:
         await message.answer("⚠️ <b>Kinoni ko'rish uchun quyidagi homiy kanallarga a'zo bo'ling:</b>", reply_markup=get_subscription_keyboard(unsubs), parse_mode="HTML")
