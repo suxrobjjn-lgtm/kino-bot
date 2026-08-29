@@ -129,7 +129,21 @@ async def receive_description(message: Message, state: FSMContext, bot: Bot):
     else:
         await message.answer(f"❌ <code>{data['code']}</code> kodi allaqachon mavjud!", reply_markup=admin_menu, parse_mode="HTML")
 
-# ----------------- BAZA GURUHINI ULASH (FORWARD YOKI BUYRUQ) -----------------
+# ----------------- BAZA GURUHINI ULASH -----------------
+@admin_router.message(F.chat.type.in_(["group", "supergroup", "channel"]), Command("set_baza", "id", "connect", "baza", "start"))
+@admin_router.channel_post(Command("set_baza", "id", "connect", "baza", "start"))
+async def set_baza_directly_in_chat(message: Message):
+    chat_id = message.chat.id
+    chat_title = message.chat.title or "Baza guruhi"
+    db.set_db_channel(chat_id)
+    await message.reply(
+        f"✅ <b>Baza guruhi/kanali muvaffaqiyatli ulandi!</b> 🎉\n\n"
+        f"🏷 Nomi: <b>{chat_title}</b>\n"
+        f"🆔 ID: <code>{chat_id}</code>\n\n"
+        f"Endi botga qo'shilgan barcha kinolar avtomatik shu yerga saqlanadi!",
+        parse_mode="HTML"
+    )
+
 @admin_router.message(Command("set_baza"))
 async def cmd_set_baza(message: Message):
     if not db.is_admin(message.from_user.id):
@@ -143,7 +157,7 @@ async def cmd_set_baza(message: Message):
         current = db.get_db_channel()
         await message.answer(
             f"📁 <b>Baza kanali sozlamasi:</b>\n\nHozirgi ID: <code>{current or 'Ulanmagan'}</code>\n\n"
-            f"Ulash uchun: guruhdan bitta xabarni botga forward qiling yoki <code>/set_baza -100xxxxxxx</code> deb yozing.",
+            f"Ulash uchun:\n1. Ochgan guruhingiz ichiga kirib <code>/set_baza</code> deb yozing\n2. Yoki guruhdan bitta xabarni botga forward qiling\n3. Yoki <code>/set_baza -100xxxxxxx</code> deb yozing.",
             parse_mode="HTML"
         )
 
@@ -170,6 +184,7 @@ async def handle_forward_for_baza(message: Message):
             reply_markup=admin_menu,
             parse_mode="HTML"
         )
+
 
 
 # ----------------- BARCHA KINOLAR RO'YXATI & PAGINATION -----------------
