@@ -1,5 +1,6 @@
 import sqlite3
 import os
+from config import ADMIN_IDS
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kino_bot.db")
 
@@ -33,7 +34,8 @@ def init_db():
         file_id TEXT NOT NULL,
         description TEXT,
         views INTEGER DEFAULT 0,
-        added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        msg_id INTEGER DEFAULT 0
     )
     """)
 
@@ -58,6 +60,9 @@ def init_db():
     except Exception:
         pass
 
+    for admin_id in ADMIN_IDS:
+        cursor.execute("INSERT OR IGNORE INTO admins (user_id, full_name) VALUES (?, ?)", (admin_id, "Bosh Admin"))
+
     conn.commit()
     conn.close()
 
@@ -77,19 +82,38 @@ def get_setting(key: str, default: str = "") -> str:
     return row[0] if row else default
 
 def set_db_channel(channel_id: int | str):
-    set_setting("db_channel_id", str(channel_id))
+    set_setting("db_channel_id", str(channel_id).strip())
 
 def get_db_channel() -> str:
     return get_setting("db_channel_id", "")
 
-def add_admin(user_id: int, full_name: str = "", username: str = ""):
+def clear_db_channel():
+    set_setting("db_channel_id", "")
+
+def add_admin(user_id: int, full_name: str = "", username: str = "") -> bool:
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("INSERT OR IGNORE INTO admins (user_id, full_name, username) VALUES (?, ?, ?)", (user_id, full_name, username))
+    try:
+        cursor.execute("INSERT OR REPLACE INTO admins (user_id, full_name, username) VALUES (?, ?, ?)", (user_id, full_name, username))
+        conn.commit()
+        success = True
+    except Exception:
+        success = False
+    conn.close()
+    return success
+
+def remove_admin(user_id: int) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM admins WHERE user_id = ?", (user_id,))
+    deleted = cursor.rowcount > 0
     conn.commit()
     conn.close()
+    return deleted
 
 def is_admin(user_id: int) -> bool:
+    if user_id in ADMIN_IDS:
+        return True
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT user_id FROM admins WHERE user_id = ?", (user_id,))
@@ -98,9 +122,17 @@ def is_admin(user_id: int) -> bool:
     total = cursor.fetchone()[0]
     conn.close()
     if total == 0:
-        add_admin(user_id)
+        add_admin(user_id, "Bosh Admin")
         return True
     return row is not None
+
+def get_admins_list():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, full_name, username, added_date FROM admins ORDER BY added_date ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
 
 def get_admins():
     conn = sqlite3.connect(DB_PATH)
@@ -108,7 +140,9 @@ def get_admins():
     cursor.execute("SELECT user_id FROM admins")
     rows = cursor.fetchall()
     conn.close()
-    return [r[0] for r in rows]
+    ids = set(r[0] for r in rows)
+    ids.update(ADMIN_IDS)
+    return list(ids)
 
 def add_user(user_id: int, full_name: str, username: str):
     conn = sqlite3.connect(DB_PATH)
@@ -156,6 +190,26 @@ def get_movie_by_code(code: str):
     conn.close()
     return movie
 
+def delete_movie_by_code(code: str) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM movies WHERE code = ?", (code.strip(),))
+    deleted = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return deleted
+
+def get_all_movies_list(page: int = 1, per_page: int = 10):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM movies")
+    total_count = cursor.fetchone()[0]
+    offset = (page - 1) * per_page
+    cursor.execute("SELECT id, code, title, views, added_date FROM movies ORDER BY id DESC LIMIT ? OFFSET ?", (per_page, offset))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows, total_count
+
 def search_movies_by_title(query: str, limit: int = 10):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -187,26 +241,6 @@ def get_top_movies(limit: int = 5):
     rows = cursor.fetchall()
     conn.close()
     return rows
-
-def get_all_movies_list(page: int = 1, per_page: int = 10):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM movies")
-    total_count = cursor.fetchone()[0]
-    offset = (page - 1) * per_page
-    cursor.execute("SELECT id, code, title, views, added_date FROM movies ORDER BY id DESC LIMIT ? OFFSET ?", (per_page, offset))
-    rows = cursor.fetchall()
-    conn.close()
-    return rows, total_count
-
-def delete_movie_by_code(code: str) -> bool:
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM movies WHERE code = ?", (code.strip(),))
-    deleted = cursor.rowcount > 0
-    conn.commit()
-    conn.close()
-    return deleted
 
 def get_channels():
     conn = sqlite3.connect(DB_PATH)

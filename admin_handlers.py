@@ -1,12 +1,20 @@
 import os
 import math
+import logging
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from keyboards import admin_menu, main_menu, cancel_keyboard, get_admin_movies_pagination_keyboard
+from keyboards import (
+    admin_menu, 
+    main_menu, 
+    cancel_keyboard, 
+    get_admin_movies_pagination_keyboard,
+    get_baza_keyboard,
+    get_admins_management_keyboard
+)
 import database as db
 
 admin_router = Router()
@@ -17,17 +25,10 @@ class AdminStates(StatesGroup):
     waiting_for_title = State()
     waiting_for_description = State()
     waiting_for_delete_code = State()
+    waiting_for_baza_id = State()
+    waiting_for_new_admin_id = State()
     waiting_for_broadcast = State()
     waiting_for_channel = State()
-
-def admin_required(func):
-    async def wrapper(message: Message, *args, **kwargs):
-        if not db.is_admin(message.from_user.id):
-            await message.answer("❌ Sizda admin huquqi yo'q.")
-            return
-        return await func(message, *args, **kwargs)
-    wrapper.__name__ = func.__name__
-    return wrapper
 
 @admin_router.message(Command("admin"))
 async def admin_panel(message: Message):
@@ -36,11 +37,14 @@ async def admin_panel(message: Message):
         return
     users_count = db.get_users_count()
     movies_count = db.get_movies_count()
+    baza_id = db.get_db_channel()
+    baza_status = f"<code>{baza_id}</code>" if baza_id else "❌ Ulanmagan"
     await message.answer(
         f"👑 <b>Admin paneliga xush kelibsiz!</b>\n\n"
         f"👥 Foydalanuvchilar: <b>{users_count}</b> ta\n"
-        f"🎬 Kinolar: <b>{movies_count}</b> ta\n\n"
-        f"Quyidagi tugmalardan birini tanlang:",
+        f"🎬 Kinolar: <b>{movies_count}</b> ta\n"
+        f"📁 Baza guruhi: {baza_status}\n\n"
+        f"Kerakli bo'limni tanlang:",
         reply_markup=admin_menu, parse_mode="HTML"
     )
 
@@ -112,80 +116,23 @@ async def receive_description(message: Message, state: FSMContext, bot: Bot):
                 sent = await bot.send_document(chat_id=int(db_channel), document=data["file_id"], caption=caption, parse_mode="HTML")
                 msg_id = sent.message_id
         except Exception as e:
-            pass
+            logging.error(f"Guruhga yuborishda xatolik: {e}")
 
     success = db.add_movie(data["code"], data["title"], data["file_id"], description, msg_id)
     await state.clear()
     if success:
         bot_info = await message.bot.get_me()
         deep_link = f"https://t.me/{bot_info.username}?start={data['code']}"
+        baza_note = "\n📁 <i>Kino baza guruhiga ham saqlandi!</i>" if msg_id > 0 else ""
         await message.answer(
             f"✅ <b>Kino muvaffaqiyatli qo'shildi!</b>\n\n"
             f"🎬 Nom: <b>{data['title']}</b>\n"
             f"🔢 Kod: <code>{data['code']}</code>\n"
-            f"🔗 Havola: {deep_link}",
+            f"🔗 Havola: {deep_link}{baza_note}",
             reply_markup=admin_menu, parse_mode="HTML"
         )
     else:
         await message.answer(f"❌ <code>{data['code']}</code> kodi allaqachon mavjud!", reply_markup=admin_menu, parse_mode="HTML")
-
-# ----------------- BAZA GURUHINI ULASH -----------------
-@admin_router.message(F.chat.type.in_(["group", "supergroup", "channel"]), Command("set_baza", "id", "connect", "baza", "start"))
-@admin_router.channel_post(Command("set_baza", "id", "connect", "baza", "start"))
-async def set_baza_directly_in_chat(message: Message):
-    chat_id = message.chat.id
-    chat_title = message.chat.title or "Baza guruhi"
-    db.set_db_channel(chat_id)
-    await message.reply(
-        f"✅ <b>Baza guruhi/kanali muvaffaqiyatli ulandi!</b> 🎉\n\n"
-        f"🏷 Nomi: <b>{chat_title}</b>\n"
-        f"🆔 ID: <code>{chat_id}</code>\n\n"
-        f"Endi botga qo'shilgan barcha kinolar avtomatik shu yerga saqlanadi!",
-        parse_mode="HTML"
-    )
-
-@admin_router.message(Command("set_baza"))
-async def cmd_set_baza(message: Message):
-    if not db.is_admin(message.from_user.id):
-        return
-    args = message.text.split(maxsplit=1)
-    if len(args) > 1:
-        ch_id = args[1].strip()
-        db.set_db_channel(ch_id)
-        await message.answer(f"✅ <b>Baza kanali ID si saqlandi:</b> <code>{ch_id}</code>", parse_mode="HTML")
-    else:
-        current = db.get_db_channel()
-        await message.answer(
-            f"📁 <b>Baza kanali sozlamasi:</b>\n\nHozirgi ID: <code>{current or 'Ulanmagan'}</code>\n\n"
-            f"Ulash uchun:\n1. Ochgan guruhingiz ichiga kirib <code>/set_baza</code> deb yozing\n2. Yoki guruhdan bitta xabarni botga forward qiling\n3. Yoki <code>/set_baza -100xxxxxxx</code> deb yozing.",
-            parse_mode="HTML"
-        )
-
-@admin_router.message(F.forward_origin | F.forward_from_chat)
-async def handle_forward_for_baza(message: Message):
-    if not db.is_admin(message.from_user.id):
-        return
-    chat_id = None
-    chat_title = "Baza guruhi/kanali"
-    if message.forward_origin and hasattr(message.forward_origin, "chat"):
-        chat_id = message.forward_origin.chat.id
-        chat_title = getattr(message.forward_origin.chat, "title", "Baza guruhi")
-    elif message.forward_from_chat:
-        chat_id = message.forward_from_chat.id
-        chat_title = message.forward_from_chat.title
-
-    if chat_id:
-        db.set_db_channel(chat_id)
-        await message.answer(
-            f"✅ <b>Baza guruhi/kanali muvaffaqiyatli ulandi!</b> 🎉\n\n"
-            f"🏷 Nomi: <b>{chat_title}</b>\n"
-            f"🆔 ID: <code>{chat_id}</code>\n\n"
-            f"Endi botga qo'shilgan har bir kino avtomatik tarzda ushbu guruhga tashlanadi va u yerdan hech qachon o'chib ketmaydi!",
-            reply_markup=admin_menu,
-            parse_mode="HTML"
-        )
-
-
 
 # ----------------- BARCHA KINOLAR RO'YXATI & PAGINATION -----------------
 async def render_movies_page(page: int = 1, per_page: int = 8):
@@ -233,7 +180,10 @@ async def on_noop(call: CallbackQuery):
 
 @admin_router.callback_query(F.data == "adm_close")
 async def on_admin_close(call: CallbackQuery):
-    await call.message.delete()
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
     await call.answer()
 
 # ----------------- KINONI O'CHIRISH -----------------
@@ -264,7 +214,7 @@ async def delete_movie_finish(message: Message, state: FSMContext):
     deleted = db.delete_movie_by_code(code)
     await state.clear()
     if deleted:
-        m_id, m_code, m_title, file_id, desc, views = movie
+        m_id, m_code, m_title, file_id, desc, views, msg_id = movie
         await message.answer(
             f"✅ <b>Kino muvaffaqiyatli o'chirildi!</b>\n\n"
             f"🎬 Nom: <b>{m_title}</b>\n"
@@ -285,7 +235,7 @@ async def on_del_confirm(call: CallbackQuery):
     if not movie:
         await call.answer("❌ Kino topilmadi", show_alert=True)
         return
-    m_id, m_code, m_title, file_id, desc, views = movie
+    m_id, m_code, m_title, file_id, desc, views, msg_id = movie
     confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ Ha, o'chirilsin", callback_data=f"adm_del_do:{code}"),
@@ -314,6 +264,161 @@ async def on_del_do(call: CallbackQuery):
         await call.answer("❌ Xatolik yuz berdi", show_alert=True)
     text, keyboard = await render_movies_page(page=1)
     await call.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+
+# ----------------- BAZA GURUHI SOZLAMALARI -----------------
+@admin_router.message(F.text == "📁 Baza guruhi")
+async def baza_menu_show(message: Message):
+    if not db.is_admin(message.from_user.id):
+        return
+    baza_id = db.get_db_channel()
+    status_text = f"✅ Ulanmagan: <code>{baza_id}</code>" if baza_id else "❌ Baza guruhi ulanmagan"
+    text = (
+        f"📁 <b>Baza guruhi sozlamalari:</b>\n\n"
+        f"Holat: {status_text}\n\n"
+        f"<i>💡 Baza guruhi ulanganda barcha yuklangan kinolar o'sha yerga avtomatik tashlanadi va hech qachon o'chib ketmaydi.</i>\n\n"
+        f"Baza guruhini ulash uchun ID sini kiriting:"
+    )
+    await message.answer(text, reply_markup=get_baza_keyboard(bool(baza_id)), parse_mode="HTML")
+
+@admin_router.callback_query(F.data == "baza_change")
+async def baza_change_start(call: CallbackQuery, state: FSMContext):
+    if not db.is_admin(call.from_user.id):
+        await call.answer("❌ Huquq yo'q", show_alert=True)
+        return
+    await state.set_state(AdminStates.waiting_for_baza_id)
+    await call.message.answer(
+        "📁 <b>Baza guruhi yoki kanali ID sini kiriting:</b>\n\n"
+        "Masalan: <code>-1002345678901</code>\n"
+        "<i>(Bot o'sha guruhda Admin bo'lishi shart)</i>",
+        reply_markup=cancel_keyboard,
+        parse_mode="HTML"
+    )
+    await call.answer()
+
+@admin_router.message(AdminStates.waiting_for_baza_id, F.text)
+async def baza_change_finish(message: Message, state: FSMContext, bot: Bot):
+    if message.text == "❌ Bekor qilish":
+        await state.clear()
+        await message.answer("❌ Bekor qilindi.", reply_markup=admin_menu)
+        return
+    raw_id = message.text.strip()
+    try:
+        chat_id = int(raw_id)
+        # Test whether bot has access
+        try:
+            chat = await bot.get_chat(chat_id)
+            title = chat.title or "Baza guruhi"
+            db.set_db_channel(chat_id)
+            await state.clear()
+            await message.answer(
+                f"✅ <b>Baza guruhi muvaffaqiyatli ulandi!</b> 🎉\n\n"
+                f"🏷 Guruh: <b>{title}</b>\n"
+                f"🆔 ID: <code>{chat_id}</code>\n\n"
+                f"Endi botga qo'shilgan barcha kinolar avtomatik shu yerga saqlanadi!",
+                reply_markup=admin_menu,
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            # Save anyway and notify
+            db.set_db_channel(chat_id)
+            await state.clear()
+            await message.answer(
+                f"✅ <b>Baza guruhi ID si saqlandi:</b> <code>{chat_id}</code>\n\n"
+                f"⚠️ <i>Eslatma: Bot o'sha guruhga Admin qilib qo'shilganiga ishonch hosil qiling.</i>",
+                reply_markup=admin_menu,
+                parse_mode="HTML"
+            )
+    except ValueError:
+        await message.answer("❌ ID raqam bo'lishi kerak (masalan: <code>-1002345678901</code>). Qayta urinib ko'ring yoki Bekor qiling:", parse_mode="HTML")
+
+@admin_router.callback_query(F.data == "baza_disconnect")
+async def baza_disconnect(call: CallbackQuery):
+    if not db.is_admin(call.from_user.id):
+        await call.answer("❌ Huquq yo'q", show_alert=True)
+        return
+    db.clear_db_channel()
+    await call.message.edit_text("✅ <b>Baza guruhi uzildi.</b>", parse_mode="HTML")
+    await call.answer("Baza guruhi uzildi", show_alert=True)
+
+# ----------------- ADMINLARNI BOSHQARISH -----------------
+@admin_router.message(F.text == "👑 Adminlar")
+async def admins_menu_show(message: Message):
+    if not db.is_admin(message.from_user.id):
+        return
+    admins = db.get_admins_list()
+    text = f"👑 <b>Adminlar ro'yxati (Jami: {len(admins)} ta):</b>\n\n"
+    for idx, (u_id, name, uname, date) in enumerate(admins, 1):
+        uname_text = f" (@{uname})" if uname else ""
+        name_text = name or "Admin"
+        text += f"{idx}. <b>{name_text}</b>{uname_text} — <code>{u_id}</code>\n"
+    text += "\nYangi admin qo'shish yoki o'chirish uchun quyidagi tugmalardan foydalaning:"
+    await message.answer(text, reply_markup=get_admins_management_keyboard(admins), parse_mode="HTML")
+
+@admin_router.callback_query(F.data == "admin_add")
+async def admin_add_start(call: CallbackQuery, state: FSMContext):
+    if not db.is_admin(call.from_user.id):
+        await call.answer("❌ Huquq yo'q", show_alert=True)
+        return
+    await state.set_state(AdminStates.waiting_for_new_admin_id)
+    await call.message.answer(
+        "👑 <b>Yangi admin qo'shish</b>\n\n"
+        "Yangi adminning <b>Telegram User ID</b> sini kiriting (masalan: <code>7909677265</code>):",
+        reply_markup=cancel_keyboard,
+        parse_mode="HTML"
+    )
+    await call.answer()
+
+@admin_router.message(AdminStates.waiting_for_new_admin_id, F.text)
+async def admin_add_finish(message: Message, state: FSMContext):
+    if message.text == "❌ Bekor qilish":
+        await state.clear()
+        await message.answer("❌ Bekor qilindi.", reply_markup=admin_menu)
+        return
+    raw_id = message.text.strip()
+    if not raw_id.isdigit():
+        await message.answer("❌ Faqat sonli ID kiriting (masalan: <code>7909677265</code>):", parse_mode="HTML")
+        return
+    new_admin_id = int(raw_id)
+    success = db.add_admin(new_admin_id, "Admin")
+    await state.clear()
+    if success:
+        await message.answer(f"✅ <b>Foydalanuvchi (ID: <code>{new_admin_id}</code>) admin qilindi!</b>", reply_markup=admin_menu, parse_mode="HTML")
+    else:
+        await message.answer("❌ Admin qo'shishda xatolik yuz berdi.", reply_markup=admin_menu)
+
+@admin_router.callback_query(F.data == "admin_remove_menu")
+async def admin_remove_menu(call: CallbackQuery):
+    if not db.is_admin(call.from_user.id):
+        await call.answer("❌ Huquq yo'q", show_alert=True)
+        return
+    admins = db.get_admins_list()
+    if not admins:
+        await call.answer("Adminlar topilmadi", show_alert=True)
+        return
+    buttons = []
+    for u_id, name, uname, _ in admins:
+        # Don't show self delete if only one
+        btn_text = f"🗑 {name or 'Admin'} ({u_id})"
+        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"adm_remove_do:{u_id}")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Ortga", callback_data="adm_close")])
+    await call.message.edit_text("🗑 <b>O'chirmoqchi bo'lgan adminni tanlang:</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    await call.answer()
+
+@admin_router.callback_query(F.data.startswith("adm_remove_do:"))
+async def on_admin_remove_do(call: CallbackQuery):
+    if not db.is_admin(call.from_user.id):
+        await call.answer("❌ Huquq yo'q", show_alert=True)
+        return
+    target_id = int(call.data.split(":")[1])
+    if target_id == call.from_user.id:
+        await call.answer("❌ O'zingizni o'chira olmaysiz!", show_alert=True)
+        return
+    db.remove_admin(target_id)
+    await call.answer(f"✅ Admin ({target_id}) o'chirildi!", show_alert=True)
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
 
 # ----------------- STATISTIKA -----------------
 @admin_router.message(F.text == "📊 To'liq statistika")

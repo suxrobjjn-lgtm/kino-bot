@@ -25,6 +25,7 @@ admin_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="➕ Yangi kino qo'shish"), KeyboardButton(text="📋 Barcha kinolar")],
         [KeyboardButton(text="🗑 Kinoni o'chirish"), KeyboardButton(text="📊 To'liq statistika")],
         [KeyboardButton(text="📢 Xabar tarqatish (Reklama)"), KeyboardButton(text="🔗 Homiy kanallar")],
+        [KeyboardButton(text="📁 Baza guruhi"), KeyboardButton(text="👑 Adminlar")],
         [KeyboardButton(text="⬅️ Foydalanuvchi menyusi")]
     ],
     resize_keyboard=True
@@ -57,6 +58,24 @@ def get_admin_movies_pagination_keyboard(page: int, total_pages: int, movies: li
     
     return InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
 
+def get_baza_keyboard(is_connected: bool):
+    buttons = []
+    if is_connected:
+        buttons.append([InlineKeyboardButton(text="🔄 Yangi guruh ID kiritish", callback_data="baza_change")])
+        buttons.append([InlineKeyboardButton(text="🗑 Guruhni uzish (O'chirish)", callback_data="baza_disconnect")])
+    else:
+        buttons.append([InlineKeyboardButton(text="➕ Guruh/Kanal ID sini kiritish", callback_data="baza_change")])
+    buttons.append([InlineKeyboardButton(text="❌ Yopish", callback_data="adm_close")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_admins_management_keyboard(admins: list):
+    buttons = [
+        [InlineKeyboardButton(text="➕ Yangi admin qo'shish", callback_data="admin_add")],
+        [InlineKeyboardButton(text="🗑 Adminni o'chirish", callback_data="admin_remove_menu")],
+        [InlineKeyboardButton(text="❌ Yopish", callback_data="adm_close")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
 def get_subscription_keyboard(channels: list):
     inline_keyboard = []
     for idx, (ch_id, ch_url, title) in enumerate(channels, 1):
@@ -68,4 +87,3 @@ def get_movie_keyboard(movie_code: str):
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="🎬 Boshqa kinolar", callback_data="show_latest")]]
     )
-
