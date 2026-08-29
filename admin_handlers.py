@@ -88,14 +88,33 @@ async def receive_title(message: Message, state: FSMContext):
     await message.answer(f"✅ Nom: <b>{title}</b>\n\n<b>Tavsif kiriting</b> (yoki 'O'tkazib yuborish' deb yozing):", parse_mode="HTML")
 
 @admin_router.message(AdminStates.waiting_for_description, F.text)
-async def receive_description(message: Message, state: FSMContext):
+async def receive_description(message: Message, state: FSMContext, bot: Bot):
     if message.text == "❌ Bekor qilish":
         await state.clear()
         await message.answer("❌ Bekor qilindi.", reply_markup=admin_menu)
         return
     description = "" if message.text.strip().lower() in ["o'tkazib yuborish", "skip", "-"] else message.text.strip()
     data = await state.get_data()
-    success = db.add_movie(data["code"], data["title"], data["file_id"], description)
+
+    msg_id = 0
+    db_channel = db.get_db_channel()
+    if db_channel:
+        try:
+            caption = f"🎬 <b>{data['title']}</b>\n\n🔢 Kodi: <code>{data['code']}</code>"
+            if description:
+                caption += f"\n\n📝 {description}"
+            caption += f"\n\n#kino_{data['code']}"
+
+            try:
+                sent = await bot.send_video(chat_id=int(db_channel), video=data["file_id"], caption=caption, parse_mode="HTML")
+                msg_id = sent.message_id
+            except Exception:
+                sent = await bot.send_document(chat_id=int(db_channel), document=data["file_id"], caption=caption, parse_mode="HTML")
+                msg_id = sent.message_id
+        except Exception as e:
+            pass
+
+    success = db.add_movie(data["code"], data["title"], data["file_id"], description, msg_id)
     await state.clear()
     if success:
         bot_info = await message.bot.get_me()
@@ -109,6 +128,49 @@ async def receive_description(message: Message, state: FSMContext):
         )
     else:
         await message.answer(f"❌ <code>{data['code']}</code> kodi allaqachon mavjud!", reply_markup=admin_menu, parse_mode="HTML")
+
+# ----------------- BAZA GURUHINI ULASH (FORWARD YOKI BUYRUQ) -----------------
+@admin_router.message(Command("set_baza"))
+async def cmd_set_baza(message: Message):
+    if not db.is_admin(message.from_user.id):
+        return
+    args = message.text.split(maxsplit=1)
+    if len(args) > 1:
+        ch_id = args[1].strip()
+        db.set_db_channel(ch_id)
+        await message.answer(f"✅ <b>Baza kanali ID si saqlandi:</b> <code>{ch_id}</code>", parse_mode="HTML")
+    else:
+        current = db.get_db_channel()
+        await message.answer(
+            f"📁 <b>Baza kanali sozlamasi:</b>\n\nHozirgi ID: <code>{current or 'Ulanmagan'}</code>\n\n"
+            f"Ulash uchun: guruhdan bitta xabarni botga forward qiling yoki <code>/set_baza -100xxxxxxx</code> deb yozing.",
+            parse_mode="HTML"
+        )
+
+@admin_router.message(F.forward_origin | F.forward_from_chat)
+async def handle_forward_for_baza(message: Message):
+    if not db.is_admin(message.from_user.id):
+        return
+    chat_id = None
+    chat_title = "Baza guruhi/kanali"
+    if message.forward_origin and hasattr(message.forward_origin, "chat"):
+        chat_id = message.forward_origin.chat.id
+        chat_title = getattr(message.forward_origin.chat, "title", "Baza guruhi")
+    elif message.forward_from_chat:
+        chat_id = message.forward_from_chat.id
+        chat_title = message.forward_from_chat.title
+
+    if chat_id:
+        db.set_db_channel(chat_id)
+        await message.answer(
+            f"✅ <b>Baza guruhi/kanali muvaffaqiyatli ulandi!</b> 🎉\n\n"
+            f"🏷 Nomi: <b>{chat_title}</b>\n"
+            f"🆔 ID: <code>{chat_id}</code>\n\n"
+            f"Endi botga qo'shilgan har bir kino avtomatik tarzda ushbu guruhga tashlanadi va u yerdan hech qachon o'chib ketmaydi!",
+            reply_markup=admin_menu,
+            parse_mode="HTML"
+        )
+
 
 # ----------------- BARCHA KINOLAR RO'YXATI & PAGINATION -----------------
 async def render_movies_page(page: int = 1, per_page: int = 8):

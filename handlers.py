@@ -21,6 +21,45 @@ async def check_user_subscription(bot: Bot, user_id: int) -> tuple[bool, list]:
             pass
     return len(unsubscribed) == 0, unsubscribed
 
+async def send_movie_to_user(bot: Bot, user_id: int, movie: tuple) -> bool:
+    m_id = movie[0]
+    code = movie[1]
+    title = movie[2]
+    file_id = movie[3]
+    desc = movie[4]
+    views = movie[5]
+    msg_id = movie[6] if len(movie) > 6 else 0
+
+    caption = f"🎬 <b>{title}</b>\n\n🔢 Kodi: <code>{code}</code>\n👁️ Ko'rishlar: {views + 1}\n\n🍿 <i>Maroqli tomosha tilaymiz!</i>\n🤖 @{(await bot.get_me()).username}"
+    if desc:
+        caption = f"🎬 <b>{title}</b>\n\n📝 {desc}\n\n🔢 Kodi: <code>{code}</code>\n👁️ Ko'rishlar: {views + 1}\n\n🍿 <i>Maroqli tomosha tilaymiz!</i>\n🤖 @{(await bot.get_me()).username}"
+
+    db_channel = db.get_db_channel()
+    if db_channel and msg_id and msg_id > 0:
+        try:
+            await bot.copy_message(
+                chat_id=user_id,
+                from_chat_id=int(db_channel),
+                message_id=msg_id,
+                caption=caption,
+                reply_markup=get_movie_keyboard(code),
+                protect_content=True,
+                parse_mode="HTML"
+            )
+            return True
+        except Exception:
+            pass
+
+    try:
+        await bot.send_video(chat_id=user_id, video=file_id, caption=caption, reply_markup=get_movie_keyboard(code), protect_content=True, parse_mode="HTML")
+        return True
+    except Exception:
+        try:
+            await bot.send_document(chat_id=user_id, document=file_id, caption=caption, reply_markup=get_movie_keyboard(code), protect_content=True, parse_mode="HTML")
+            return True
+        except Exception:
+            return False
+
 @router.message(CommandStart())
 async def cmd_start(message: Message, bot: Bot):
     user = message.from_user
@@ -35,12 +74,7 @@ async def cmd_start(message: Message, bot: Bot):
             return
         movie = db.get_movie_by_code(movie_code)
         if movie:
-            m_id, code, title, file_id, desc, views = movie
-            caption = f"🎬 <b>{title}</b>\n\n🔢 Kodi: <code>{code}</code>\n👁️ Ko'rishlar: {views + 1}\n\n🍿 <i>Maroqli tomosha tilaymiz!</i>\n🤖 @{(await bot.get_me()).username}"
-            try:
-                await message.answer_video(video=file_id, caption=caption, reply_markup=get_movie_keyboard(code), protect_content=True, parse_mode="HTML")
-            except Exception:
-                await message.answer_document(document=file_id, caption=caption, reply_markup=get_movie_keyboard(code), protect_content=True, parse_mode="HTML")
+            await send_movie_to_user(bot, user.id, movie)
             return
 
     await message.answer(
@@ -71,12 +105,7 @@ async def random_movie(message: Message, bot: Bot):
     chosen = rand_module.choice(movies)
     movie = db.get_movie_by_code(chosen[0])
     if movie:
-        m_id, code, title, file_id, desc, views = movie
-        caption = f"🎲 <b>Tasodifiy kino:</b>\n\n🎬 <b>{title}</b>\n🔢 Kodi: <code>{code}</code>\n👁️ Ko'rishlar: {views + 1}\n\n🤖 @{(await bot.get_me()).username}"
-        try:
-            await message.answer_video(video=file_id, caption=caption, reply_markup=get_movie_keyboard(code), protect_content=True, parse_mode="HTML")
-        except Exception:
-            await message.answer_document(document=file_id, caption=caption, reply_markup=get_movie_keyboard(code), protect_content=True, parse_mode="HTML")
+        await send_movie_to_user(bot, message.from_user.id, movie)
 
 @router.message(Command("search"))
 @router.message(F.text == "🔍 Kino qidirish (Kod / Nom)")
@@ -152,12 +181,7 @@ async def process_user_query(message: Message, bot: Bot):
 
     movie = db.get_movie_by_code(query)
     if movie:
-        m_id, code, title, file_id, desc, views = movie
-        caption = f"🎬 <b>{title}</b>\n\n🔢 Kodi: <code>{code}</code>\n👁️ Ko'rishlar: {views + 1}\n\n🍿 <i>Maroqli tomosha tilaymiz!</i>\n🤖 @{(await bot.get_me()).username}"
-        try:
-            await message.answer_video(video=file_id, caption=caption, reply_markup=get_movie_keyboard(code), protect_content=True, parse_mode="HTML")
-        except Exception:
-            await message.answer_document(document=file_id, caption=caption, reply_markup=get_movie_keyboard(code), protect_content=True, parse_mode="HTML")
+        await send_movie_to_user(bot, message.from_user.id, movie)
         return
 
     matches = db.search_movies_by_title(query)
@@ -170,3 +194,4 @@ async def process_user_query(message: Message, bot: Bot):
         return
 
     await message.answer(f"❌ <b>'{query}' topilmadi.</b>\n\nKodni to'g'ri kiritganingizni tekshiring.", reply_markup=main_menu, parse_mode="HTML")
+

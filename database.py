@@ -46,8 +46,41 @@ def init_db():
     )
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    )
+    """)
+
+    try:
+        cursor.execute("ALTER TABLE movies ADD COLUMN msg_id INTEGER DEFAULT 0")
+    except Exception:
+        pass
+
     conn.commit()
     conn.close()
+
+def set_setting(key: str, value: str):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
+    conn.commit()
+    conn.close()
+
+def get_setting(key: str, default: str = "") -> str:
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else default
+
+def set_db_channel(channel_id: int | str):
+    set_setting("db_channel_id", str(channel_id))
+
+def get_db_channel() -> str:
+    return get_setting("db_channel_id", "")
 
 def add_admin(user_id: int, full_name: str = "", username: str = ""):
     conn = sqlite3.connect(DB_PATH)
@@ -100,11 +133,11 @@ def get_users_count():
     conn.close()
     return count
 
-def add_movie(code: str, title: str, file_id: str, description: str = ""):
+def add_movie(code: str, title: str, file_id: str, description: str = "", msg_id: int = 0):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     try:
-        cursor.execute("INSERT INTO movies (code, title, file_id, description) VALUES (?, ?, ?, ?)", (code.strip(), title.strip(), file_id.strip(), description.strip()))
+        cursor.execute("INSERT INTO movies (code, title, file_id, description, msg_id) VALUES (?, ?, ?, ?, ?)", (code.strip(), title.strip(), file_id.strip(), description.strip(), msg_id))
         conn.commit()
         success = True
     except sqlite3.IntegrityError:
@@ -115,7 +148,7 @@ def add_movie(code: str, title: str, file_id: str, description: str = ""):
 def get_movie_by_code(code: str):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, code, title, file_id, description, views FROM movies WHERE code = ?", (code.strip(),))
+    cursor.execute("SELECT id, code, title, file_id, description, views, msg_id FROM movies WHERE code = ?", (code.strip(),))
     movie = cursor.fetchone()
     if movie:
         cursor.execute("UPDATE movies SET views = views + 1 WHERE id = ?", (movie[0],))
