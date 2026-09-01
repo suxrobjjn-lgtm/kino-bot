@@ -81,15 +81,6 @@ def get_setting(key: str, default: str = "") -> str:
     conn.close()
     return row[0] if row else default
 
-def set_db_channel(channel_id: int | str):
-    set_setting("db_channel_id", str(channel_id).strip())
-
-def get_db_channel() -> str:
-    return get_setting("db_channel_id", "")
-
-def clear_db_channel():
-    set_setting("db_channel_id", "")
-
 def add_admin(user_id: int, full_name: str = "", username: str = "") -> bool:
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -242,29 +233,18 @@ def get_top_movies(limit: int = 5):
     conn.close()
     return rows
 
-def get_channels():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT channel_id, channel_url, title FROM channels")
-    rows = cursor.fetchall()
-    conn.close()
-    return rows
 
-def add_channel(channel_id: str, channel_url: str, title: str):
+def update_movie(code: str, new_title: str = None, new_description: str = None) -> bool:
+    """Kino nomini yoki tavsifini yangilaydi."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    try:
-        cursor.execute("INSERT OR REPLACE INTO channels (channel_id, channel_url, title) VALUES (?, ?, ?)", (channel_id.strip(), channel_url.strip(), title.strip()))
-        conn.commit()
-        success = True
-    except Exception:
-        success = False
-    conn.close()
-    return success
-
-def delete_channel(channel_id: str):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM channels WHERE channel_id = ?", (channel_id.strip(),))
+    if new_title is not None and new_description is not None:
+        cursor.execute("UPDATE movies SET title=?, description=? WHERE code=?", (new_title.strip(), new_description.strip(), code.strip()))
+    elif new_title is not None:
+        cursor.execute("UPDATE movies SET title=? WHERE code=?", (new_title.strip(), code.strip()))
+    elif new_description is not None:
+        cursor.execute("UPDATE movies SET description=? WHERE code=?", (new_description.strip(), code.strip()))
+    updated = cursor.rowcount > 0
     conn.commit()
     conn.close()
+    return updated

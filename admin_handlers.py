@@ -12,10 +12,10 @@ from keyboards import (
     main_menu, 
     cancel_keyboard, 
     get_admin_movies_pagination_keyboard,
-    get_baza_keyboard,
     get_admins_management_keyboard
 )
 import database as db
+import config
 
 admin_router = Router()
 
@@ -25,10 +25,15 @@ class AdminStates(StatesGroup):
     waiting_for_title = State()
     waiting_for_description = State()
     waiting_for_delete_code = State()
-    waiting_for_baza_id = State()
     waiting_for_new_admin_id = State()
     waiting_for_broadcast = State()
     waiting_for_channel = State()
+    waiting_for_channel_id = State()
+    waiting_for_channel_url = State()
+    waiting_for_channel_name = State()
+    waiting_for_edit_code = State()
+    waiting_for_edit_title = State()
+    waiting_for_edit_desc = State()
 
 @admin_router.message(Command("admin"))
 async def admin_panel(message: Message):
@@ -37,8 +42,7 @@ async def admin_panel(message: Message):
         return
     users_count = db.get_users_count()
     movies_count = db.get_movies_count()
-    baza_id = db.get_db_channel()
-    baza_status = f"<code>{baza_id}</code>" if baza_id else "❌ Ulanmagan"
+    baza_status = f"<code>{config.BAZA_ID}</code>" if config.BAZA_ID else "❌ .env da BAZA_ID belgilanmagan"
     await message.answer(
         f"👑 <b>Admin paneliga xush kelibsiz!</b>\n\n"
         f"👥 Foydalanuvchilar: <b>{users_count}</b> ta\n"
@@ -54,7 +58,16 @@ async def add_movie_start(message: Message, state: FSMContext):
     if not db.is_admin(message.from_user.id):
         return
     await state.set_state(AdminStates.waiting_for_video)
-    await message.answer("🎬 <b>Yangi kino qo'shish</b>\n\nVideo faylni yuboring (MP4, MKV, AVI):", reply_markup=cancel_keyboard, parse_mode="HTML")
+    await message.answer("🎬 <b>Yangi kino qo'shish</b>\n\nVideo faylni yuboring (MP4, MKV, AVI):\n<i>Bekor qilish uchun pastdagi tugmani bosing.</i>", reply_markup=cancel_keyboard, parse_mode="HTML")
+
+@admin_router.message(AdminStates.waiting_for_video, F.text)
+async def waiting_video_got_text(message: Message, state: FSMContext):
+    """Admin video o'rniga matn yuborsa — bekor qilish yoki eslatma."""
+    if message.text == "❌ Bekor qilish":
+        await state.clear()
+        await message.answer("❌ Bekor qilindi.", reply_markup=admin_menu)
+        return
+    await message.answer("⚠️ Iltimos, <b>video fayl yuboring</b> yoki ❌ Bekor qilish bosing.", parse_mode="HTML")
 
 @admin_router.message(AdminStates.waiting_for_video, F.video | F.document)
 async def receive_video(message: Message, state: FSMContext):
@@ -101,8 +114,8 @@ async def receive_description(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
 
     msg_id = 0
-    db_channel = db.get_db_channel()
-    if db_channel:
+    # Kinoni to'g'ridan-to'g'ri baza guruhiga yuborish (.env dagi BAZA_ID)
+    if config.BAZA_ID:
         try:
             caption = f"🎬 <b>{data['title']}</b>\n\n🔢 Kodi: <code>{data['code']}</code>"
             if description:
@@ -110,10 +123,10 @@ async def receive_description(message: Message, state: FSMContext, bot: Bot):
             caption += f"\n\n#kino_{data['code']}"
 
             try:
-                sent = await bot.send_video(chat_id=int(db_channel), video=data["file_id"], caption=caption, parse_mode="HTML")
+                sent = await bot.send_video(chat_id=int(config.BAZA_ID), video=data["file_id"], caption=caption, parse_mode="HTML")
                 msg_id = sent.message_id
             except Exception:
-                sent = await bot.send_document(chat_id=int(db_channel), document=data["file_id"], caption=caption, parse_mode="HTML")
+                sent = await bot.send_document(chat_id=int(config.BAZA_ID), document=data["file_id"], caption=caption, parse_mode="HTML")
                 msg_id = sent.message_id
         except Exception as e:
             logging.error(f"Guruhga yuborishda xatolik: {e}")
@@ -123,7 +136,7 @@ async def receive_description(message: Message, state: FSMContext, bot: Bot):
     if success:
         bot_info = await message.bot.get_me()
         deep_link = f"https://t.me/{bot_info.username}?start={data['code']}"
-        baza_note = "\n📁 <i>Kino baza guruhiga ham saqlandi!</i>" if msg_id > 0 else ""
+        baza_note = "\n📁 <i>Kino baza guruhiga ham saqlandi!</i>" if msg_id > 0 else "\n⚠️ <i>Baza guruhiga yuborilmadi (BAZA_ID sozlanmagan)</i>"
         await message.answer(
             f"✅ <b>Kino muvaffaqiyatli qo'shildi!</b>\n\n"
             f"🎬 Nom: <b>{data['title']}</b>\n"
@@ -265,81 +278,6 @@ async def on_del_do(call: CallbackQuery):
     text, keyboard = await render_movies_page(page=1)
     await call.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
 
-# ----------------- BAZA GURUHI SOZLAMALARI -----------------
-@admin_router.message(F.text == "📁 Baza guruhi")
-async def baza_menu_show(message: Message):
-    if not db.is_admin(message.from_user.id):
-        return
-    baza_id = db.get_db_channel()
-    status_text = f"✅ Ulanmagan: <code>{baza_id}</code>" if baza_id else "❌ Baza guruhi ulanmagan"
-    text = (
-        f"📁 <b>Baza guruhi sozlamalari:</b>\n\n"
-        f"Holat: {status_text}\n\n"
-        f"<i>💡 Baza guruhi ulanganda barcha yuklangan kinolar o'sha yerga avtomatik tashlanadi va hech qachon o'chib ketmaydi.</i>\n\n"
-        f"Baza guruhini ulash uchun ID sini kiriting:"
-    )
-    await message.answer(text, reply_markup=get_baza_keyboard(bool(baza_id)), parse_mode="HTML")
-
-@admin_router.callback_query(F.data == "baza_change")
-async def baza_change_start(call: CallbackQuery, state: FSMContext):
-    if not db.is_admin(call.from_user.id):
-        await call.answer("❌ Huquq yo'q", show_alert=True)
-        return
-    await state.set_state(AdminStates.waiting_for_baza_id)
-    await call.message.answer(
-        "📁 <b>Baza guruhi yoki kanali ID sini kiriting:</b>\n\n"
-        "Masalan: <code>-1002345678901</code>\n"
-        "<i>(Bot o'sha guruhda Admin bo'lishi shart)</i>",
-        reply_markup=cancel_keyboard,
-        parse_mode="HTML"
-    )
-    await call.answer()
-
-@admin_router.message(AdminStates.waiting_for_baza_id, F.text)
-async def baza_change_finish(message: Message, state: FSMContext, bot: Bot):
-    if message.text == "❌ Bekor qilish":
-        await state.clear()
-        await message.answer("❌ Bekor qilindi.", reply_markup=admin_menu)
-        return
-    raw_id = message.text.strip()
-    try:
-        chat_id = int(raw_id)
-        # Test whether bot has access
-        try:
-            chat = await bot.get_chat(chat_id)
-            title = chat.title or "Baza guruhi"
-            db.set_db_channel(chat_id)
-            await state.clear()
-            await message.answer(
-                f"✅ <b>Baza guruhi muvaffaqiyatli ulandi!</b> 🎉\n\n"
-                f"🏷 Guruh: <b>{title}</b>\n"
-                f"🆔 ID: <code>{chat_id}</code>\n\n"
-                f"Endi botga qo'shilgan barcha kinolar avtomatik shu yerga saqlanadi!",
-                reply_markup=admin_menu,
-                parse_mode="HTML"
-            )
-        except Exception as e:
-            # Save anyway and notify
-            db.set_db_channel(chat_id)
-            await state.clear()
-            await message.answer(
-                f"✅ <b>Baza guruhi ID si saqlandi:</b> <code>{chat_id}</code>\n\n"
-                f"⚠️ <i>Eslatma: Bot o'sha guruhga Admin qilib qo'shilganiga ishonch hosil qiling.</i>",
-                reply_markup=admin_menu,
-                parse_mode="HTML"
-            )
-    except ValueError:
-        await message.answer("❌ ID raqam bo'lishi kerak (masalan: <code>-1002345678901</code>). Qayta urinib ko'ring yoki Bekor qiling:", parse_mode="HTML")
-
-@admin_router.callback_query(F.data == "baza_disconnect")
-async def baza_disconnect(call: CallbackQuery):
-    if not db.is_admin(call.from_user.id):
-        await call.answer("❌ Huquq yo'q", show_alert=True)
-        return
-    db.clear_db_channel()
-    await call.message.edit_text("✅ <b>Baza guruhi uzildi.</b>", parse_mode="HTML")
-    await call.answer("Baza guruhi uzildi", show_alert=True)
-
 # ----------------- ADMINLARNI BOSHQARISH -----------------
 @admin_router.message(F.text == "👑 Adminlar")
 async def admins_menu_show(message: Message):
@@ -397,7 +335,6 @@ async def admin_remove_menu(call: CallbackQuery):
         return
     buttons = []
     for u_id, name, uname, _ in admins:
-        # Don't show self delete if only one
         btn_text = f"🗑 {name or 'Admin'} ({u_id})"
         buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"adm_remove_do:{u_id}")])
     buttons.append([InlineKeyboardButton(text="⬅️ Ortga", callback_data="adm_close")])
@@ -466,44 +403,211 @@ async def process_broadcast(message: Message, state: FSMContext, bot: Bot):
     await status_msg.edit_text(f"✅ <b>Reklama yakunlandi!</b>\n\n✅ Muvaffaqiyatli: <b>{success}</b>\n❌ Xatolik: <b>{fail}</b>\n👥 Jami: <b>{len(users)}</b>", parse_mode="HTML")
     await message.answer("Admin panel:", reply_markup=admin_menu)
 
-# ----------------- HOMIY KANALLAR -----------------
+# ----------------- HOMIY KANALLAR (INLINE UI) -----------------
+def get_channels_keyboard(channels):
+    """Kanallar inline keyboard"""
+    btns = []
+    for ch_id, ch_url, title in channels:
+        btns.append([
+            InlineKeyboardButton(text=f"🔗 {title}", url=ch_url),
+            InlineKeyboardButton(text="🗑 O'chir", callback_data=f"ch_del:{ch_id}")
+        ])
+    btns.append([InlineKeyboardButton(text="➕ Yangi kanal qo'shish", callback_data="ch_add")])
+    btns.append([InlineKeyboardButton(text="❌ Yopish", callback_data="adm_close")])
+    return InlineKeyboardMarkup(inline_keyboard=btns)
+
 @admin_router.message(F.text == "🔗 Homiy kanallar")
 async def manage_channels(message: Message, state: FSMContext):
     if not db.is_admin(message.from_user.id):
         return
-    channels = db.get_channels()
-    text = "🔗 <b>Homiy kanallar:</b>\n\n"
+    await state.clear()
+    channels = config.get_channels()
+    text = "🔗 <b>Homiy kanallar:</b>\n"
+    text += f"<i>Jami: {len(channels)} ta kanal</i>\n\n"
     if channels:
-        for ch_id, ch_url, title in channels:
-            text += f"• <b>{title}</b> | {ch_url} | ID: <code>{ch_id}</code>\n"
+        for i, (ch_id, ch_url, title) in enumerate(channels, 1):
+            text += f"{i}. <b>{title}</b> | <code>{ch_id}</code>\n"
     else:
         text += "Hozircha kanal yo'q.\n"
-    text += "\n<b>Kanal qo'shish:</b> <code>+ @kanal_username https://t.me/kanal Kanal nomi</code>\n<b>Kanal o'chirish:</b> <code>- @kanal_username</code>"
-    await state.set_state(AdminStates.waiting_for_channel)
-    await message.answer(text, reply_markup=cancel_keyboard, parse_mode="HTML")
+    text += "\n<i>Kanal qo'shish yoki o'chirish uchun tugmalardan foydalaning:</i>"
+    await message.answer(text, reply_markup=get_channels_keyboard(channels), parse_mode="HTML")
 
-@admin_router.message(AdminStates.waiting_for_channel, F.text)
-async def process_channel_command(message: Message, state: FSMContext):
-    text = message.text.strip()
-    if text == "❌ Bekor qilish":
+@admin_router.callback_query(F.data == "ch_add")
+async def channel_add_start(call: CallbackQuery, state: FSMContext):
+    if not db.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    await state.set_state(AdminStates.waiting_for_channel_id)
+    await call.message.answer(
+        "➕ <b>Yangi kanal qo'shish</b>\n\n"
+        "1-qadam: Kanal/guruh <b>username</b> yoki <b>ID</b> sini yuboring:\n"
+        "Masalan: <code>@kanal_nomi</code> yoki <code>-1001234567890</code>",
+        reply_markup=cancel_keyboard, parse_mode="HTML"
+    )
+    await call.answer()
+
+@admin_router.message(AdminStates.waiting_for_channel_id, F.text)
+async def channel_add_got_id(message: Message, state: FSMContext):
+    if message.text == "❌ Bekor qilish":
         await state.clear()
         await message.answer("❌ Bekor qilindi.", reply_markup=admin_menu)
         return
-    if text.startswith("+ "):
-        parts = text[2:].split(maxsplit=2)
-        if len(parts) >= 3:
-            ch_id, ch_url, title = parts[0], parts[1], parts[2]
-            db.add_channel(ch_id, ch_url, title)
-            await message.answer(f"✅ <b>{title}</b> kanali qo'shildi!", reply_markup=admin_menu, parse_mode="HTML")
-        else:
-            await message.answer("❌ Format xato! <code>+ @kanal https://t.me/kanal Kanal nomi</code>", parse_mode="HTML")
-    elif text.startswith("- "):
-        ch_id = text[2:].strip()
-        db.delete_channel(ch_id)
-        await message.answer(f"✅ <code>{ch_id}</code> kanali o'chirildi!", reply_markup=admin_menu, parse_mode="HTML")
-    else:
-        await message.answer("Format xato! + yoki - bilan boshlang.", reply_markup=admin_menu)
+    await state.update_data(ch_id=message.text.strip())
+    await state.set_state(AdminStates.waiting_for_channel_url)
+    await message.answer(
+        "2-qadam: Kanal <b>havolasini</b> yuboring:\n"
+        "Masalan: <code>https://t.me/kanal_nomi</code>",
+        parse_mode="HTML"
+    )
+
+@admin_router.message(AdminStates.waiting_for_channel_url, F.text)
+async def channel_add_got_url(message: Message, state: FSMContext):
+    if message.text == "❌ Bekor qilish":
+        await state.clear()
+        await message.answer("❌ Bekor qilindi.", reply_markup=admin_menu)
+        return
+    await state.update_data(ch_url=message.text.strip())
+    await state.set_state(AdminStates.waiting_for_channel_name)
+    await message.answer(
+        "3-qadam: Kanal <b>nomini</b> yuboring:\n"
+        "Masalan: <code>KINO comfy</code>",
+        parse_mode="HTML"
+    )
+
+@admin_router.message(AdminStates.waiting_for_channel_name, F.text)
+async def channel_add_got_name(message: Message, state: FSMContext):
+    if message.text == "❌ Bekor qilish":
+        await state.clear()
+        await message.answer("❌ Bekor qilindi.", reply_markup=admin_menu)
+        return
+    data = await state.get_data()
+    title = message.text.strip()
+    config.add_channel(data["ch_id"], data["ch_url"], title)
     await state.clear()
+    channels = config.get_channels()
+    await message.answer(
+        f"✅ <b>{title}</b> kanali qo'shildi!\n💾 <i>.env ga saqlandi</i>",
+        reply_markup=admin_menu, parse_mode="HTML"
+    )
+    await message.answer(
+        "🔗 <b>Yangilangan kanallar:</b>",
+        reply_markup=get_channels_keyboard(channels), parse_mode="HTML"
+    )
+
+@admin_router.callback_query(F.data.startswith("ch_del:"))
+async def channel_delete(call: CallbackQuery):
+    if not db.is_admin(call.from_user.id):
+        await call.answer()
+        return
+    ch_id = call.data.split(":", 1)[1]
+    config.delete_channel(ch_id)
+    channels = config.get_channels()
+    await call.answer(f"✅ {ch_id} o'chirildi!", show_alert=True)
+    text = "🔗 <b>Homiy kanallar:</b>\n"
+    text += f"<i>Jami: {len(channels)} ta kanal</i>\n\n"
+    for i, (cid, curl, ctitle) in enumerate(channels, 1):
+        text += f"{i}. <b>{ctitle}</b> | <code>{cid}</code>\n"
+    if not channels:
+        text += "Hozircha kanal yo'q.\n"
+    try:
+        await call.message.edit_text(text, reply_markup=get_channels_keyboard(channels), parse_mode="HTML")
+    except Exception:
+        pass
+
+# ----------------- KINO TAHRIRLASH -----------------
+@admin_router.message(F.text == "✏️ Kinoni tahrirlash")
+async def edit_movie_start(message: Message, state: FSMContext):
+    if not db.is_admin(message.from_user.id):
+        return
+    await state.set_state(AdminStates.waiting_for_edit_code)
+    await message.answer(
+        "✏️ <b>Kinoni tahrirlash</b>\n\nTahrirlamoqchi bo'lgan kinoning <b>kodini</b> kiriting:",
+        reply_markup=cancel_keyboard, parse_mode="HTML"
+    )
+
+@admin_router.message(AdminStates.waiting_for_edit_code, F.text)
+async def edit_movie_got_code(message: Message, state: FSMContext):
+    if message.text == "❌ Bekor qilish":
+        await state.clear()
+        await message.answer("❌ Bekor qilindi.", reply_markup=admin_menu)
+        return
+    code = message.text.strip()
+    movie = db.get_movie_by_code(code)
+    if not movie:
+        await message.answer(f"❌ <code>{code}</code> kodli kino topilmadi. Qayta kiriting:", parse_mode="HTML")
+        return
+    await state.update_data(edit_code=code, old_title=movie[2], old_desc=movie[4])
+    edit_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎥 Nomini o'zgartirish", callback_data="edit_title")],
+        [InlineKeyboardButton(text="📝 Tavsifini o'zgartirish", callback_data="edit_desc")],
+        [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="edit_cancel")]
+    ])
+    await message.answer(
+        f"🎬 <b>{movie[2]}</b>\n"
+        f"Kod: <code>{code}</code>\n"
+        f"Tavsif: {movie[4] or '<i>yo\'q</i>'}\n\n"
+        f"Nimani o'zgartirmoqchisiz?",
+        reply_markup=edit_kb, parse_mode="HTML"
+    )
+
+@admin_router.callback_query(F.data == "edit_title")
+async def edit_title_start(call: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminStates.waiting_for_edit_title)
+    data = await state.get_data()
+    await call.message.answer(
+        f"Hozirgi nom: <b>{data.get('old_title', '')}</b>\n\nYangi nomni kiriting:",
+        reply_markup=cancel_keyboard, parse_mode="HTML"
+    )
+    await call.answer()
+
+@admin_router.callback_query(F.data == "edit_desc")
+async def edit_desc_start(call: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminStates.waiting_for_edit_desc)
+    data = await state.get_data()
+    await call.message.answer(
+        f"Hozirgi tavsif: <i>{data.get('old_desc') or 'yo\'q'}</i>\n\nYangi tavsifni kiriting (yoki <code>-</code> o'chirish uchun):",
+        reply_markup=cancel_keyboard, parse_mode="HTML"
+    )
+    await call.answer()
+
+@admin_router.callback_query(F.data == "edit_cancel")
+async def edit_cancel(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await call.message.answer("❌ Bekor qilindi.", reply_markup=admin_menu)
+    await call.answer()
+
+@admin_router.message(AdminStates.waiting_for_edit_title, F.text)
+async def edit_title_finish(message: Message, state: FSMContext):
+    if message.text == "❌ Bekor qilish":
+        await state.clear()
+        await message.answer("❌ Bekor qilindi.", reply_markup=admin_menu)
+        return
+    data = await state.get_data()
+    code = data.get("edit_code")
+    new_title = message.text.strip()
+    db.update_movie(code, new_title=new_title)
+    await state.clear()
+    await message.answer(
+        f"✅ <b>{code}</b> kino nomi yangilandi!\n"
+        f"Yangi nom: <b>{new_title}</b>",
+        reply_markup=admin_menu, parse_mode="HTML"
+    )
+
+@admin_router.message(AdminStates.waiting_for_edit_desc, F.text)
+async def edit_desc_finish(message: Message, state: FSMContext):
+    if message.text == "❌ Bekor qilish":
+        await state.clear()
+        await message.answer("❌ Bekor qilindi.", reply_markup=admin_menu)
+        return
+    data = await state.get_data()
+    code = data.get("edit_code")
+    new_desc = "" if message.text.strip() == "-" else message.text.strip()
+    db.update_movie(code, new_description=new_desc)
+    await state.clear()
+    await message.answer(
+        f"✅ <b>{code}</b> kino tavsifi yangilandi!",
+        reply_markup=admin_menu, parse_mode="HTML"
+    )
 
 # ----------------- MENYUGA QAYTISH -----------------
 @admin_router.message(F.text == "⬅️ Foydalanuvchi menyusi")

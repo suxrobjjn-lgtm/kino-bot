@@ -1,14 +1,16 @@
 import os
 import sys
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="ignore")
 
-load_dotenv()
+ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+load_dotenv(ENV_PATH)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 ADMIN_ID = os.getenv("ADMIN_ID", "").strip()
+BAZA_ID = os.getenv("BAZA_ID", "").strip()
 
 try:
     ADMIN_IDS = [int(i.strip()) for i in ADMIN_ID.split(",") if i.strip().isdigit()]
@@ -17,3 +19,37 @@ except Exception:
 
 if not BOT_TOKEN or BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE":
     print("OGOHLANTIRISH: .env fayliga haqiqiy Telegram Bot Token kiritilmagan!")
+
+def get_channels():
+    """Kanallar ro'yxatini .env dan o'qiydi"""
+    raw = os.getenv("CHANNELS", "").strip()
+    if not raw:
+        return []
+    channels = []
+    for entry in raw.split(","):
+        parts = entry.strip().split("|")
+        if len(parts) == 3:
+            channels.append((parts[0].strip(), parts[1].strip(), parts[2].strip()))
+    return channels
+
+def save_channels(channels: list):
+    """Kanallar ro'yxatini .env ga yozadi"""
+    raw = ",".join(f"{ch[0]}|{ch[1]}|{ch[2]}" for ch in channels)
+    set_key(ENV_PATH, "CHANNELS", raw)
+    # runtime da ham yangilaymiz
+    os.environ["CHANNELS"] = raw
+
+def add_channel(channel_id: str, channel_url: str, title: str) -> bool:
+    """Yangi kanal qo'shadi"""
+    channels = get_channels()
+    # Agar allaqachon borsa, yangilaymiz
+    channels = [ch for ch in channels if ch[0] != channel_id.strip()]
+    channels.append((channel_id.strip(), channel_url.strip(), title.strip()))
+    save_channels(channels)
+    return True
+
+def delete_channel(channel_id: str):
+    """Kanal o'chiradi"""
+    channels = get_channels()
+    channels = [ch for ch in channels if ch[0] != channel_id.strip()]
+    save_channels(channels)

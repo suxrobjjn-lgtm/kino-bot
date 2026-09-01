@@ -3,12 +3,16 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command
 from keyboards import main_menu, get_subscription_keyboard, get_movie_keyboard
 import database as db
+import config
+import logging
 import random as rand_module
 
 router = Router()
 
+
 async def check_user_subscription(bot: Bot, user_id: int) -> tuple[bool, list]:
-    channels = db.get_channels()
+    """Foydalanuvchi barcha homiy kanallarga a'zo ekanligini tekshiradi."""
+    channels = config.get_channels()
     if not channels:
         return True, []
     unsubscribed = []
@@ -17,12 +21,29 @@ async def check_user_subscription(bot: Bot, user_id: int) -> tuple[bool, list]:
             member = await bot.get_chat_member(chat_id=ch_id, user_id=user_id)
             if member.status in ["left", "kicked"]:
                 unsubscribed.append((ch_id, ch_url, title))
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning(f"Obuna tekshirishda xatolik ({ch_id}): {e}")
+            unsubscribed.append((ch_id, ch_url, title))
     return len(unsubscribed) == 0, unsubscribed
 
+
+async def require_subscription(message: Message, bot: Bot) -> bool:
+    """Obuna tekshirib, agar obuna bo'lmasa xabar yuboradi.
+    True = obuna bo'lgan (o'tish mumkin), False = bloklandi."""
+    if db.is_admin(message.from_user.id):
+        return True  # Adminlar uchun obuna tekshirilmaydi
+    is_sub, unsubs = await check_user_subscription(bot, message.from_user.id)
+    if not is_sub:
+        await message.answer(
+            "⚠️ <b>Kinoni ko'rish uchun quyidagi homiy kanallarga a'zo bo'ling:</b>",
+            reply_markup=get_subscription_keyboard(unsubs),
+            parse_mode="HTML"
+        )
+        return False
+    return True
+
+
 async def send_movie_to_user(bot: Bot, user_id: int, movie: tuple) -> bool:
-    m_id = movie[0]
     code = movie[1]
     title = movie[2]
     file_id = movie[3]
@@ -30,11 +51,13 @@ async def send_movie_to_user(bot: Bot, user_id: int, movie: tuple) -> bool:
     views = movie[5]
     msg_id = movie[6] if len(movie) > 6 else 0
 
-    caption = f"🎬 <b>{title}</b>\n\n🔢 Kodi: <code>{code}</code>\n👁️ Ko'rishlar: {views + 1}\n\n🍿 <i>Maroqli tomosha tilaymiz!</i>\n🤖 @{(await bot.get_me()).username}"
+    bot_info = await bot.get_me()
     if desc:
-        caption = f"🎬 <b>{title}</b>\n\n📝 {desc}\n\n🔢 Kodi: <code>{code}</code>\n👁️ Ko'rishlar: {views + 1}\n\n🍿 <i>Maroqli tomosha tilaymiz!</i>\n🤖 @{(await bot.get_me()).username}"
+        caption = f"🎬 <b>{title}</b>\n\n📝 {desc}\n\n🔢 Kodi: <code>{code}</code>\n👁️ Ko'rishlar: {views + 1}\n\n🍿 <i>Maroqli tomosha tilaymiz!</i>\n🤖 @{bot_info.username}"
+    else:
+        caption = f"🎬 <b>{title}</b>\n\n🔢 Kodi: <code>{code}</code>\n👁️ Ko'rishlar: {views + 1}\n\n🍿 <i>Maroqli tomosha tilaymiz!</i>\n🤖 @{bot_info.username}"
 
-    db_channel = db.get_db_channel()
+    db_channel = config.BAZA_ID
     if db_channel and msg_id and msg_id > 0:
         try:
             await bot.copy_message(
@@ -47,19 +70,27 @@ async def send_movie_to_user(bot: Bot, user_id: int, movie: tuple) -> bool:
                 parse_mode="HTML"
             )
             return True
-        except Exception:
-            pass
+        except Exception as e:
+            logging.error(f"Guruhdan nusxa olishda xatolik: {e}")
 
     try:
-        await bot.send_video(chat_id=user_id, video=file_id, caption=caption, reply_markup=get_movie_keyboard(code), protect_content=True, parse_mode="HTML")
+        await bot.send_video(
+            chat_id=user_id, video=file_id, caption=caption,
+            reply_markup=get_movie_keyboard(code), protect_content=True, parse_mode="HTML"
+        )
         return True
     except Exception:
         try:
-            await bot.send_document(chat_id=user_id, document=file_id, caption=caption, reply_markup=get_movie_keyboard(code), protect_content=True, parse_mode="HTML")
+            await bot.send_document(
+                chat_id=user_id, document=file_id, caption=caption,
+                reply_markup=get_movie_keyboard(code), protect_content=True, parse_mode="HTML"
+            )
             return True
         except Exception:
             return False
 
+
+# ─────────────────────── /start ───────────────────────
 @router.message(CommandStart())
 async def cmd_start(message: Message, bot: Bot):
     user = message.from_user
@@ -68,23 +99,38 @@ async def cmd_start(message: Message, bot: Bot):
     args = message.text.split(maxsplit=1)
     if len(args) > 1:
         movie_code = args[1].strip()
-        is_sub, unsubs = await check_user_subscription(bot, user.id)
-        if not is_sub:
-            await message.answer("⚠️ <b>Kinoni ko'rish uchun quyidagi homiy kanallarga a'zo bo'ling:</b>", reply_markup=get_subscription_keyboard(unsubs), parse_mode="HTML")
+        if not await require_subscription(message, bot):
             return
         movie = db.get_movie_by_code(movie_code)
         if movie:
             await send_movie_to_user(bot, user.id, movie)
             return
 
+    if db.is_admin(user.id):
+        from keyboards import admin_menu
+        await message.answer(
+            f"👑 <b>Xush kelibsiz, Admin!</b>\n\n"
+            f"👥 Foydalanuvchilar: <b>{db.get_users_count()}</b> ta\n"
+            f"🎬 Kinolar: <b>{db.get_movies_count()}</b> ta\n\n"
+            f"Kerakli bo'limni tanlang:",
+            reply_markup=admin_menu, parse_mode="HTML"
+        )
+        return
+
     await message.answer(
-        f"Assalomu alaykum, <b>{user.full_name or 'Foydalanuvchi'}</b>!\n\n🎬 <b>Kino Botiga xush kelibsiz!</b>\n\nKino kodini yuboring yoki kino nomini yozing.\nMasalan: <code>101</code>",
+        f"Assalomu alaykum, <b>{user.full_name or 'Foydalanuvchi'}</b>!\n\n"
+        f"🎬 <b>Kino Botiga xush kelibsiz!</b>\n\n"
+        f"Kino kodini yuboring yoki kino nomini yozing.\nMasalan: <code>101</code>",
         reply_markup=main_menu, parse_mode="HTML"
     )
 
+
+# ─────────────────────── So'nggi kinolar ───────────────────────
 @router.message(Command("latest"))
 @router.message(F.text == "🎬 So'nggi kinolar")
-async def show_latest_movies(message: Message):
+async def show_latest_movies(message: Message, bot: Bot):
+    if not await require_subscription(message, bot):
+        return
     movies = db.get_latest_movies(10)
     if not movies:
         await message.answer("Hozircha bazada kinolar mavjud emas.")
@@ -95,9 +141,13 @@ async def show_latest_movies(message: Message):
     text += "<i>Tomosha qilish uchun kodini botga yuboring!</i>"
     await message.answer(text, parse_mode="HTML")
 
+
+# ─────────────────────── Tasodifiy kino ───────────────────────
 @router.message(Command("random"))
 @router.message(F.text == "🎲 Tasodifiy kino")
 async def random_movie(message: Message, bot: Bot):
+    if not await require_subscription(message, bot):
+        return
     movies = db.get_latest_movies(50)
     if not movies:
         await message.answer("Hozircha kinolar mavjud emas.")
@@ -107,11 +157,15 @@ async def random_movie(message: Message, bot: Bot):
     if movie:
         await send_movie_to_user(bot, message.from_user.id, movie)
 
+
+# ─────────────────────── Qidirish ───────────────────────
 @router.message(Command("search"))
 @router.message(F.text == "🔍 Kino qidirish (Kod / Nom)")
 async def search_hint(message: Message):
     await message.answer("Kino kodini (masalan: <code>101</code>) yoki nomini yozing:", parse_mode="HTML")
 
+
+# ─────────────────────── Statistika ───────────────────────
 @router.message(Command("stats"))
 @router.message(F.text == "📊 Statistika")
 async def user_stats(message: Message):
@@ -131,10 +185,18 @@ async def user_stats(message: Message):
         text += "Hozircha ma'lumot yo'q.\n"
     await message.answer(text, parse_mode="HTML")
 
+
+# ─────────────────────── Bot haqida ───────────────────────
 @router.message(F.text == "ℹ️ Bot haqida")
 async def about_bot(message: Message):
-    await message.answer("ℹ️ <b>Kino Boti:</b>\nBarcha yangi kinolar va seriallarni o'zbek tilida yuqori sifatda tomosha qiling!", parse_mode="HTML")
+    await message.answer(
+        "ℹ️ <b>Kino Boti:</b>\n"
+        "Barcha yangi kinolar va seriallarni o'zbek tilida yuqori sifatda tomosha qiling!",
+        parse_mode="HTML"
+    )
 
+
+# ─────────────────────── Yordam ───────────────────────
 @router.message(Command("help"))
 @router.message(F.text == "📞 Yordam")
 async def support_contact(message: Message):
@@ -150,14 +212,20 @@ async def support_contact(message: Message):
         parse_mode="HTML"
     )
 
+
+# ─────────────────────── Callback: obuna tekshirish ───────────────────────
 @router.callback_query(F.data == "check_subscription")
 async def callback_check_sub(callback: CallbackQuery, bot: Bot):
     is_sub, unsubs = await check_user_subscription(bot, callback.from_user.id)
     if is_sub:
         await callback.message.delete()
-        await callback.message.answer("✅ <b>Barcha kanallarga a'zo bo'ldingiz!</b>\nEndi kino kodini yozishingiz mumkin!", reply_markup=main_menu, parse_mode="HTML")
+        await callback.message.answer(
+            "✅ <b>Barcha kanallarga a'zo bo'ldingiz!</b>\nEndi kino kodini yozishingiz mumkin!",
+            reply_markup=main_menu, parse_mode="HTML"
+        )
     else:
         await callback.answer("❌ Hali hamma kanallarga a'zo bo'lmadingiz!", show_alert=True)
+
 
 @router.callback_query(F.data == "show_latest")
 async def callback_show_latest(callback: CallbackQuery):
@@ -171,15 +239,15 @@ async def callback_show_latest(callback: CallbackQuery):
     await callback.message.answer(text, parse_mode="HTML")
     await callback.answer()
 
+
+# ─────────────────────── Barcha matn xabarlari (kino kodi / qidiruv) ───────────────────────
 @router.message(F.text)
 async def process_user_query(message: Message, bot: Bot):
     query = message.text.strip()
     if query.startswith("/"):
         return
 
-    is_sub, unsubs = await check_user_subscription(bot, message.from_user.id)
-    if not is_sub:
-        await message.answer("⚠️ <b>Kinoni ko'rish uchun quyidagi homiy kanallarga a'zo bo'ling:</b>", reply_markup=get_subscription_keyboard(unsubs), parse_mode="HTML")
+    if not await require_subscription(message, bot):
         return
 
     movie = db.get_movie_by_code(query)
@@ -196,5 +264,7 @@ async def process_user_query(message: Message, bot: Bot):
         await message.answer(text, parse_mode="HTML")
         return
 
-    await message.answer(f"❌ <b>'{query}' topilmadi.</b>\n\nKodni to'g'ri kiritganingizni tekshiring.", reply_markup=main_menu, parse_mode="HTML")
-
+    await message.answer(
+        f"❌ <b>'{query}' topilmadi.</b>\n\nKodni to'g'ri kiritganingizni tekshiring.",
+        reply_markup=main_menu, parse_mode="HTML"
+    )
