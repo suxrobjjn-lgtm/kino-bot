@@ -8,9 +8,9 @@ if sys.stdout and hasattr(sys.stdout, "reconfigure"):
 ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 load_dotenv(ENV_PATH)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-ADMIN_ID = os.getenv("ADMIN_ID", "").strip()
-BAZA_ID = os.getenv("BAZA_ID", "").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8794577340:AAFSE5BQIolYxfrqNfiGcszWgsEbs1xn3L0").strip()
+ADMIN_ID = os.getenv("ADMIN_ID", "7909677265").strip()
+BAZA_ID = os.getenv("BAZA_ID", "-1004294509106").strip()
 
 try:
     ADMIN_IDS = [int(i.strip()) for i in ADMIN_ID.split(",") if i.strip().isdigit()]
@@ -22,7 +22,7 @@ if not BOT_TOKEN or BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE":
 
 def get_channels():
     """Kanallar ro'yxatini .env dan o'qiydi"""
-    raw = os.getenv("CHANNELS", "").strip()
+    raw = os.getenv("CHANNELS", "@kino_comfy_gr|https://t.me/kino_comfy_gr|KINO comfy").strip()
     if not raw:
         return []
     channels = []
