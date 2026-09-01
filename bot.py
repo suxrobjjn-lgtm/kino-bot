@@ -34,6 +34,20 @@ async def start_web_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
+async def keep_alive_pinger():
+    """Render serveri uyquga ketmasligi uchun har 10 daqiqada o'ziga o'zi so'rov (ping) yuboradi."""
+    url = "https://kino-bot-word.onrender.com/health"
+    await asyncio.sleep(60)  # Ishga tushgach 1 daqiqa kutamiz
+    while True:
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=15) as resp:
+                    logging.info(f"Keep-alive self-ping muvaffaqiyatli: {resp.status}")
+        except Exception as e:
+            logging.debug(f"Keep-alive ping xabari: {e}")
+        await asyncio.sleep(600)  # Har 10 daqiqada takrorlanadi
+
 async def main():
     db.init_db()
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE":
@@ -48,6 +62,9 @@ async def main():
         await start_web_server()
     except Exception as e:
         logging.warning(f"Web server xatosi: {e}")
+
+    # Render serveri hech qachon o'chmasligi uchun avtomatik pinger
+    asyncio.create_task(keep_alive_pinger())
 
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
